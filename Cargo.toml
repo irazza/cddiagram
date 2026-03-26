@@ -8,5 +8,5 @@ name = "cd_diagram"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.23.5"
+pyo3 = "0.28.2"
 svg = "0.18.0"
