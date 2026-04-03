@@ -1,5 +1,10 @@
+import warnings
+from xml.etree import ElementTree as ET
+
 import numpy as np
+import pytest
 from cddiagram import draw_cd_diagram
+
 
 def _make_significant_samples() -> tuple[np.ndarray, list[str]]:
     rng = np.random.default_rng(1)
@@ -23,15 +28,27 @@ def test_draw_cd_diagram_array(tmp_path):
     samples, labels = _make_significant_samples()
     out_file = tmp_path / "df.svg"
 
-    draw_cd_diagram(samples, labels=labels, out_file=str(out_file), title="TEST")
+    result = draw_cd_diagram(samples, labels=labels, out_file=str(out_file), title="TEST")
 
-    content = out_file.read_text(encoding="utf-8")
     assert out_file.exists()
+    content = out_file.read_text(encoding="utf-8")
     assert "<svg" in content
     assert "CD=" in content
+    assert isinstance(result, ET.Element)
 
 
-def test_draw_cd_diagram_non_significant(capsys, tmp_path):
+def test_draw_cd_diagram_in_memory():
+    samples, labels = _make_significant_samples()
+
+    result = draw_cd_diagram(samples, labels=labels)
+
+    assert isinstance(result, ET.Element)
+    svg_str = ET.tostring(result, encoding="unicode")
+    assert "<svg" in svg_str
+    assert "CD=" in svg_str
+
+
+def test_draw_cd_diagram_non_significant(tmp_path):
     rng = np.random.default_rng(7)
     samples = np.column_stack(
         [
@@ -43,8 +60,8 @@ def test_draw_cd_diagram_non_significant(capsys, tmp_path):
     out_file = tmp_path / "none.svg"
     labels = ["model1", "model2", "model3"]
 
-    draw_cd_diagram(samples, labels=labels, out_file=str(out_file))
-    captured = capsys.readouterr()
+    with pytest.warns(UserWarning, match="cannot be rejected"):
+        result = draw_cd_diagram(samples, labels=labels, out_file=str(out_file))
 
+    assert result is None
     assert not out_file.exists()
-    assert "cannot be rejected" in captured.out

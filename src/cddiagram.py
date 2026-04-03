@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Sequence
 from xml.etree import ElementTree as ET
 
 import numpy as np
-from scipy.stats import friedmanchisquare, rankdata
 
 
 STROKE_WIDTH = 3.0
@@ -144,25 +144,20 @@ def _draw_models(parent: ET.Element, labels: list[str], avg_ranks: list[float], 
             )
 
 
-def _draw_clique(parent: ET.Element, start_x: float, start_y: float, clique_len: float, dry_run: bool) -> float:
-    if dry_run:
-        return start_y
-
-    _svg_rect(parent, start_x - STROKE_WIDTH, start_y - STROKE_WIDTH / 2.0, STROKE_WIDTH, STROKE_WIDTH)
-    _svg_line(parent, start_x, start_y, start_x + clique_len, start_y, color="red", width=STROKE_WIDTH / 2.0)
-    _svg_rect(parent, start_x + clique_len, start_y - STROKE_WIDTH / 2.0, STROKE_WIDTH, STROKE_WIDTH)
-    return start_y
-
-
-def _draw_cliques(parent: ET.Element, cd: float, avg_ranks: list[float], width: int, height: int, *, dry_run: bool) -> float:
+def _compute_cliques(
+    cd: float, avg_ranks: list[float], width: int, height: int,
+) -> tuple[list[tuple[float, float, float]], float]:
+    """Return (cliques, lowest_clique_y). Each clique is (x, y, length)."""
     start_y = (START_Y_PERC - 0.15) * height
     start_x = 0.2 * width
     end_x = 0.8 * width
     cd_len = (end_x - start_x) * cd / len(avg_ranks)
 
-    lowest_clique = _draw_clique(parent, start_x - cd_len / 2.0, start_y + (0.01 * height), cd_len, dry_run)
-
-    _svg_text(parent, f"CD={cd:.2f}", start_x, start_y)
+    # CD reference bar
+    ref_x = start_x - cd_len / 2.0
+    ref_y = start_y + (0.01 * height)
+    cliques: list[tuple[float, float, float]] = [(ref_x, ref_y, cd_len)]
+    lowest_clique = ref_y
 
     height_stride_perc = 1.0 / (len(avg_ranks) * 3)
     cliques_start_y = (START_Y_PERC + 0.02) * height
@@ -181,10 +176,18 @@ def _draw_cliques(parent: ET.Element, cd: float, avg_ranks: list[float], width: 
             if last_x2 is None or abs(last_x2 - x2) > 1e-9:
                 last_x2 = x2
                 y = cliques_start_y + height_stride_perc * (h * height)
-                lowest_clique = max(lowest_clique, _draw_clique(parent, x2, y, abs(x1 - x2), dry_run))
+                cliques.append((x2, y, abs(x1 - x2)))
+                lowest_clique = max(lowest_clique, y)
                 h += 1
 
-    return lowest_clique
+    return cliques, lowest_clique
+
+
+def _render_cliques(parent: ET.Element, cliques: list[tuple[float, float, float]]) -> None:
+    for x, y, length in cliques:
+        _svg_rect(parent, x - STROKE_WIDTH, y - STROKE_WIDTH / 2.0, STROKE_WIDTH, STROKE_WIDTH)
+        _svg_line(parent, x, y, x + length, y, color="red", width=STROKE_WIDTH / 2.0)
+        _svg_rect(parent, x + length, y - STROKE_WIDTH / 2.0, STROKE_WIDTH, STROKE_WIDTH)
 
 
 def _render_cd_diagram(
@@ -192,9 +195,8 @@ def _render_cd_diagram(
     avg_ranks: list[float],
     labels: list[str],
     title: str | None = None,
-    out_file: str | None = None,
     fig_size: tuple[int, int] | None = None,
-) -> None:
+) -> ET.Element:
     delta = 8
     offset_height = 32
     if fig_size is None:
@@ -219,13 +221,15 @@ def _render_cd_diagram(
 
     _svg_text(svg, title or "", width / 2.0, 0.1 * height, color="black")
     _draw_ruler(svg, len(avg_ranks) - 1, width, height)
-    lowest_clique = _draw_cliques(svg, cd, avg_ranks, width, height, dry_run=True)
-    _draw_models(svg, labels, avg_ranks, lowest_clique, width, height)
-    _draw_cliques(svg, cd, avg_ranks, width, height, dry_run=False)
 
-    output = Path(out_file or "image.svg")
-    tree = ET.ElementTree(svg)
-    tree.write(output, encoding="utf-8", xml_declaration=True)
+    cliques, lowest_clique = _compute_cliques(cd, avg_ranks, width, height)
+    cd_label_y = (START_Y_PERC - 0.15) * height
+    _svg_text(svg, f"CD={cd:.2f}", 0.2 * width, cd_label_y)
+
+    _draw_models(svg, labels, avg_ranks, lowest_clique, width, height)
+    _render_cliques(svg, cliques)
+
+    return svg
 
 
 def _to_numpy_2d(samples: object) -> np.ndarray:
@@ -250,36 +254,47 @@ def draw_cd_diagram(
     title: str | None = None,
     out_file: str | None = None,
     fig_size: tuple[int, int] | None = None,
-) -> None:
+) -> ET.Element | None:
     alpha = 0.05
 
     samples_ = _to_numpy_2d(samples)
     labels_ = list(labels)
 
+    from scipy.stats import friedmanchisquare, rankdata
+
     _, pvalue = friedmanchisquare(*samples_.T)
-    if pvalue < alpha:
-        N, k = samples_.shape
-        if len(labels_) != k:
-            raise ValueError("labels length must match number of model columns")
-        if k >= len(qstu_0_05) or np.isnan(qstu_0_05[k]):
-            raise ValueError(f"unsupported number of models for lookup table: {k}")
-
-        q_alpha = qstu_0_05[k]
-        cd = q_alpha * np.sqrt((k * (k + 1)) / (6 * N))
-
-        avg_ranks = rankdata(-samples_, axis=1, method="average").mean(axis=0)
-        sorted_indices = np.argsort(-avg_ranks)
-
-        _render_cd_diagram(
-            cd,
-            avg_ranks[sorted_indices].tolist(),
-            [labels_[i] for i in sorted_indices],
-            title,
-            out_file,
-            fig_size,
+    if pvalue >= alpha:
+        warnings.warn(
+            "The null hypothesis of the Friedman test cannot be rejected.",
+            stacklevel=2,
         )
-    else:
-        print("The null hypothesis of Friedman Test cannot be rejected")
+        return None
+
+    N, k = samples_.shape
+    if len(labels_) != k:
+        raise ValueError("labels length must match number of model columns")
+    if k >= len(_QSTU_0_05) or np.isnan(_QSTU_0_05[k]):
+        raise ValueError(f"unsupported number of models for lookup table: {k}")
+
+    q_alpha = _QSTU_0_05[k]
+    cd = q_alpha * np.sqrt((k * (k + 1)) / (6 * N))
+
+    avg_ranks = rankdata(-samples_, axis=1, method="average").mean(axis=0)
+    sorted_indices = np.argsort(-avg_ranks)
+
+    svg = _render_cd_diagram(
+        cd,
+        avg_ranks[sorted_indices].tolist(),
+        [labels_[i] for i in sorted_indices],
+        title,
+        fig_size,
+    )
+
+    if out_file is not None:
+        tree = ET.ElementTree(svg)
+        tree.write(Path(out_file), encoding="utf-8", xml_declaration=True)
+
+    return svg
 
 
-qstu_0_05 = [np.nan, np.nan, 1.959964233, 2.343700476, 2.569032073, 2.727774717, 2.849705382, 2.948319908, 3.030878867, 3.10173026, 3.16368342, 3.218653901, 3.268003591, 3.312738701, 3.353617959, 3.391230382, 3.426041249, 3.458424619, 3.488684546, 3.517072762, 3.543799277, 3.569040161, 3.592946027, 3.615646276, 3.637252631, 3.657860551, 3.677556303, 3.696413427, 3.71449839, 3.731869175, 3.748578108, 3.764671858, 3.780192852, 3.795178566, 3.809663649, 3.823679212, 3.837254248, 3.850413505, 3.863181025, 3.875578729, 3.887627121, 3.899344587, 3.910747391, 3.921852503, 3.932673359, 3.943224099, 3.953518159, 3.963566147, 3.973379375, 3.98296845, 3.992343271, 4.001512325, 4.010484803, 4.019267776, 4.02786973, 4.036297029, 4.044556036, 4.05265453, 4.060596753, 4.068389777, 4.076037844, 4.083547318, 4.090921028, 4.098166044, 4.105284488, 4.112282016, 4.119161458, 4.125927056, 4.132582345, 4.139131568, 4.145576139, 4.151921008, 4.158168297, 4.164320833, 4.170380738, 4.176352255, 4.182236797, 4.188036487, 4.19375486, 4.199392622, 4.204952603, 4.21043763, 4.215848411, 4.221187067, 4.22645572, 4.23165649, 4.236790793, 4.241859334, 4.246864943, 4.251809034, 4.256692313, 4.261516196, 4.266282802, 4.270992841, 4.275648432, 4.280249575, 4.284798393, 4.289294885, 4.29374188, 4.298139377, 4.302488791]
+_QSTU_0_05 = (np.nan, np.nan, 1.959964233, 2.343700476, 2.569032073, 2.727774717, 2.849705382, 2.948319908, 3.030878867, 3.10173026, 3.16368342, 3.218653901, 3.268003591, 3.312738701, 3.353617959, 3.391230382, 3.426041249, 3.458424619, 3.488684546, 3.517072762, 3.543799277, 3.569040161, 3.592946027, 3.615646276, 3.637252631, 3.657860551, 3.677556303, 3.696413427, 3.71449839, 3.731869175, 3.748578108, 3.764671858, 3.780192852, 3.795178566, 3.809663649, 3.823679212, 3.837254248, 3.850413505, 3.863181025, 3.875578729, 3.887627121, 3.899344587, 3.910747391, 3.921852503, 3.932673359, 3.943224099, 3.953518159, 3.963566147, 3.973379375, 3.98296845, 3.992343271, 4.001512325, 4.010484803, 4.019267776, 4.02786973, 4.036297029, 4.044556036, 4.05265453, 4.060596753, 4.068389777, 4.076037844, 4.083547318, 4.090921028, 4.098166044, 4.105284488, 4.112282016, 4.119161458, 4.125927056, 4.132582345, 4.139131568, 4.145576139, 4.151921008, 4.158168297, 4.164320833, 4.170380738, 4.176352255, 4.182236797, 4.188036487, 4.19375486, 4.199392622, 4.204952603, 4.21043763, 4.215848411, 4.221187067, 4.22645572, 4.23165649, 4.236790793, 4.241859334, 4.246864943, 4.251809034, 4.256692313, 4.261516196, 4.266282802, 4.270992841, 4.275648432, 4.280249575, 4.284798393, 4.289294885, 4.29374188, 4.298139377, 4.302488791)
