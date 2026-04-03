@@ -1,5 +1,5 @@
 [project]
-name = "cd_diagram"
+name = "cddiagram"
 version = "0.0.1"
 authors = [
   { name="Alberto Azzari", email="alberto.azzari@univr.it" },
@@ -33,7 +33,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-py-modules = ["cd_diagram"]
+py-modules = ["cddiagram"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

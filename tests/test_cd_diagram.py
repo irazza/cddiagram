@@ -1,5 +1,5 @@
 import numpy as np
-from cd_diagram import draw_cd_diagram
+from cddiagram import draw_cd_diagram
 
 def _make_significant_samples() -> tuple[np.ndarray, list[str]]:
     rng = np.random.default_rng(1)

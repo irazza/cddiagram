@@ -13,12 +13,12 @@ The SVG output is generated using Python standard library functionality.
 
 ## Install
 ```bash
-pip install cd_diagram
+pip install cddiagram
 ```
 
 ## Usage
 ```python
-from cd_diagram import draw_cd_diagram
+from cddiagram import draw_cd_diagram
 import numpy as np
 
 
