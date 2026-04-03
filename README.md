@@ -50,17 +50,6 @@ draw_cd_diagram(samples, labels=list(models.keys()), out_file="out.svg", title="
 
 <img src="./out.svg">
 
-### In-memory usage
-
-`draw_cd_diagram` returns the SVG as an `xml.etree.ElementTree.Element`, so you can use it without writing to disk:
-
-```python
-from xml.etree import ElementTree as ET
-
-svg = draw_cd_diagram(samples, labels=list(models.keys()))
-svg_string = ET.tostring(svg, encoding="unicode")
-```
-
 ### Non-significant results
 
 If the Friedman test is not significant, the function issues a warning and returns `None` — no diagram is produced because the data does not support ranking the models.
