@@ -4,30 +4,42 @@ version = "0.0.1"
 authors = [
   { name="Alberto Azzari", email="alberto.azzari@univr.it" },
 ]
-description = ""
+description = "Critical Difference diagram generator in pure Python"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.12"
 
 classifiers = [
     "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 
 dependencies = [
-    "maturin",
     "numpy",
-    "pandas",
     "scipy",
-    "typeguard",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build",
+  "pytest",
+  "twine",
 ]
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.maturin]
-features = ["pyo3/extension-module"]
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["cd_diagram"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.urls]
 Homepage = "https://github.com/albertoazzari/cd-diagram"
 Issues = "https://github.com/albertoazzari/cd-diagram/issues"
+Source = "https://github.com/albertoazzari/cd-diagram"
 

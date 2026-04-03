@@ -1,6 +1,6 @@
 # Critical Difference (CD) Diagram
 
-This repository provides a tool for drawing Critical Difference (CD) diagrams, widely used to visualize and compare the performance ranks of multiple models or algorithms. 
+This repository provides a pure Python tool for drawing Critical Difference (CD) diagrams, widely used to visualize and compare the performance ranks of multiple models or algorithms.
 
 The process starts by performing the Friedman Chi-Square test to determine if there are significant differences between the models. 
 If significant differences are found, the Nemenyi post-hoc test is applied to identify which model pairs differ significantly.
@@ -9,11 +9,17 @@ The resulting CD diagram illustrates the average ranks of the models, highlighti
 
 This tool is ideal for researchers and practitioners who need to create clear, publication-ready visualizations for statistical model comparisons.
 
+The SVG output is generated using Python standard library functionality.
+
+## Install
+```bash
+pip install cd_diagram
+```
+
 ## Usage
 ```python
 from cd_diagram import draw_cd_diagram
 import numpy as np
-import pandas as pd
 
 
 rng = np.random.default_rng(1)
@@ -28,10 +34,7 @@ models = {
     'model7': rng.normal(loc=0.8, scale=0.1, size=30),
     'model8': rng.normal(loc=0.9, scale=0.1, size=30),
 }
-
-models = pd.DataFrame(models)
-
-# it works with both a pandas Dataframe and a numpy array
-draw_cd_diagram(models, labels=models.columns.to_list(), out_file="out.svg")
+samples = np.column_stack([models[k] for k in models])
+draw_cd_diagram(samples, labels=list(models.keys()), out_file="out.svg")
 ```
 <img src="./out.svg">
