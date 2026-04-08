@@ -15,8 +15,20 @@ START_Y_PERC = 0.4
 __all__ = ["draw_cd_diagram"]
 
 
-def _get_relative_x(value: float, n_items: int, interval_len: float) -> float:
-    return ((n_items - value + 1.0) / n_items) * interval_len
+def _rank_to_x(rank: float, k: int, start_x: float, end_x: float) -> float:
+    if k <= 1:
+        return (start_x + end_x) / 2.0
+    return start_x + (rank - 1.0) * (end_x - start_x) / (k - 1.0)
+
+
+def _estimate_label_rows(labels: list[str], k: int, start_x: float, end_x: float) -> int:
+    if k <= 1 or not labels:
+        return 1
+    avg_rank_gap_px = (end_x - start_x) / (k - 1)
+    max_label_len = max(len(label) for label in labels)
+    est_label_width_px = max(24.0, 0.58 * FONT_SIZE * max_label_len)
+    rows = int(np.ceil(est_label_width_px / max(1.0, avg_rank_gap_px)))
+    return int(np.clip(rows, 1, 6))
 
 
 def _svg_line(parent: ET.Element, x1: float, y1: float, x2: float, y2: float, *, color: str = "black", width: float = STROKE_WIDTH) -> None:
@@ -75,119 +87,85 @@ def _svg_text(
     node.text = text
 
 
-def _draw_ruler(parent: ET.Element, n_items: int, width: int, height: int) -> None:
-    start_y = START_Y_PERC * height
+def _draw_ruler(parent: ET.Element, k: int, width: int, height: int, axis_y: float) -> tuple[float, float]:
     start_x = 0.2 * width
     end_x = 0.8 * width
 
-    _svg_line(parent, start_x, start_y, end_x, start_y)
+    _svg_line(parent, start_x, axis_y, end_x, axis_y)
+    tick_len = 0.035 * height
+    for tick in range(1, k + 1):
+        x = _rank_to_x(float(tick), k, start_x, end_x)
+        _svg_line(parent, x, axis_y - tick_len / 2.0, x, axis_y + tick_len / 2.0, width=STROKE_WIDTH / 2.0)
+        _svg_text(parent, str(tick), x, axis_y - tick_len / 2.0 - FONT_SIZE)
 
-    n_lines = n_items * 2
-    step = (end_x - start_x) / n_lines
-    for i in range(n_lines + 1):
-        x = start_x + i * step
-        if i % 2 == 0:
-            bar_len = 0.05 * height
-            _svg_line(parent, x, start_y + STROKE_WIDTH / 2.0, x, start_y - bar_len)
-            number = n_items - (i // 2) + 1
-            _svg_text(parent, str(number), x, start_y - bar_len - FONT_SIZE)
-        else:
-            bar_len = 0.025 * height
-            _svg_line(parent, x, start_y + STROKE_WIDTH / 2.0, x, start_y - bar_len)
+    return start_x, end_x
 
 
-def _draw_models(parent: ET.Element, labels: list[str], avg_ranks: list[float], lowest_clique: float, width: int, height: int) -> None:
-    start_y = START_Y_PERC * height
-    start_x = 0.2 * width
-    end_x = 0.8 * width
+def _draw_models(
+    parent: ET.Element,
+    labels: list[str],
+    avg_ranks: list[float],
+    k: int,
+    width: int,
+    height: int,
+    axis_y: float,
+    start_x: float,
+    end_x: float,
+) -> None:
+    n_rows = _estimate_label_rows(labels, k, start_x, end_x)
+    row_spacing = FONT_SIZE + 8
+    base_offset = 0.075 * height
 
-    half_count = len(labels) // 2
-    for i, (label, value) in enumerate(zip(labels, avg_ranks)):
-        x = start_x + _get_relative_x(value, len(labels), end_x - start_x)
-        color = "gray" if i % 2 == 0 else "black"
+    for i, (label, rank) in enumerate(zip(labels, avg_ranks)):
+        x = _rank_to_x(rank, k, start_x, end_x)
+        marker_size = STROKE_WIDTH
+        _svg_rect(parent, x - marker_size / 2.0, axis_y - marker_size / 2.0, marker_size, marker_size, fill="black")
 
-        if i < half_count:
-            end_y = (
-                lowest_clique
-                + (i * (height - lowest_clique)) / (half_count + 1)
-                + FONT_SIZE / 2.0
-                + STROKE_WIDTH
-            )
-            _svg_line(parent, x, start_y, x, end_y, color=color, width=STROKE_WIDTH / 2.0)
-            _svg_line(parent, x, end_y, start_x - 0.01 * width, end_y, color=color, width=STROKE_WIDTH / 2.0)
-            _svg_text(
-                parent,
-                label,
-                start_x - 0.015 * width,
-                end_y,
-                anchor="end",
-                color=color,
-                dominant_baseline="middle",
-            )
-        else:
-            end_y = (
-                lowest_clique
-                + ((len(labels) - i - 1) * (height - lowest_clique)) / (half_count + 1)
-                + FONT_SIZE / 2.0
-                + STROKE_WIDTH
-            )
-            _svg_line(parent, x, start_y, x, end_y, color=color, width=STROKE_WIDTH / 2.0)
-            _svg_line(parent, x, end_y, end_x + 0.01 * width, end_y, color=color, width=STROKE_WIDTH / 2.0)
-            _svg_text(
-                parent,
-                label,
-                end_x + 0.015 * width,
-                end_y,
-                anchor="start",
-                color=color,
-                dominant_baseline="middle",
-            )
+        label_row = i % n_rows
+        label_y = axis_y + base_offset + label_row * row_spacing
+        _svg_line(parent, x, axis_y + marker_size / 2.0, x, label_y - FONT_SIZE / 2.0, width=STROKE_WIDTH / 2.0)
+        _svg_text(parent, label, x, label_y, dominant_baseline="hanging")
 
 
-def _compute_cliques(
-    cd: float, avg_ranks: list[float], width: int, height: int,
-) -> tuple[list[tuple[float, float, float]], float]:
-    """Return (cliques, lowest_clique_y). Each clique is (x, y, length)."""
-    start_y = (START_Y_PERC - 0.15) * height
-    start_x = 0.2 * width
-    end_x = 0.8 * width
-    cd_len = (end_x - start_x) * cd / len(avg_ranks)
-
-    # CD reference bar
-    ref_x = start_x - cd_len / 2.0
-    ref_y = start_y + (0.01 * height)
-    cliques: list[tuple[float, float, float]] = [(ref_x, ref_y, cd_len)]
-    lowest_clique = ref_y
-
-    height_stride_perc = 1.0 / (len(avg_ranks) * 3)
-    cliques_start_y = (START_Y_PERC + 0.02) * height
-    h = 0
-    last_x2 = None
-    for i in range(len(avg_ranks) - 1, -1, -1):
-        count = 0
-        for j in range(i - 1, -1, -1):
-            if abs(avg_ranks[i] - avg_ranks[j]) < cd:
-                count += 1
-            else:
-                break
-        if count > 0:
-            x1 = start_x + _get_relative_x(avg_ranks[i], len(avg_ranks), end_x - start_x)
-            x2 = start_x + _get_relative_x(avg_ranks[i - count], len(avg_ranks), end_x - start_x)
-            if last_x2 is None or abs(last_x2 - x2) > 1e-9:
-                last_x2 = x2
-                y = cliques_start_y + height_stride_perc * (h * height)
-                cliques.append((x2, y, abs(x1 - x2)))
-                lowest_clique = max(lowest_clique, y)
-                h += 1
-
-    return cliques, lowest_clique
+def _compute_nonsignificant_groups(sorted_avg_ranks: list[float], cd: float) -> list[tuple[float, float]]:
+    groups: list[tuple[float, float]] = []
+    for i in range(len(sorted_avg_ranks)):
+        j = i + 1
+        while j < len(sorted_avg_ranks) and sorted_avg_ranks[j] - sorted_avg_ranks[i] <= cd:
+            j += 1
+        if j - i > 1:
+            groups.append((sorted_avg_ranks[i], sorted_avg_ranks[j - 1]))
+    return groups
 
 
-def _render_cliques(parent: ET.Element, cliques: list[tuple[float, float, float]]) -> None:
-    for x, y, length in cliques:
-        _svg_rect(parent, x - STROKE_WIDTH, y - STROKE_WIDTH / 2.0, STROKE_WIDTH, STROKE_WIDTH)
-        _svg_line(parent, x, y, x + length, y, color="red", width=STROKE_WIDTH / 2.0)
-        _svg_rect(parent, x + length, y - STROKE_WIDTH / 2.0, STROKE_WIDTH, STROKE_WIDTH)
+def _draw_cd_bar(parent: ET.Element, cd: float, k: int, start_x: float, end_x: float, cd_y: float) -> None:
+    cd_start = 1.0
+    cd_end = 1.0 + cd
+    x1 = _rank_to_x(cd_start, k, start_x, end_x)
+    x2 = _rank_to_x(cd_end, k, start_x, end_x)
+    _svg_line(parent, x1, cd_y, x2, cd_y, color="red", width=STROKE_WIDTH / 2.0)
+    tick_len = 0.02 * (end_x - start_x)
+    _svg_line(parent, x1, cd_y - tick_len / 2.0, x1, cd_y + tick_len / 2.0, color="red", width=STROKE_WIDTH / 2.0)
+    _svg_line(parent, x2, cd_y - tick_len / 2.0, x2, cd_y + tick_len / 2.0, color="red", width=STROKE_WIDTH / 2.0)
+    _svg_text(parent, f"CD={cd:.2f}", (x1 + x2) / 2.0, cd_y - FONT_SIZE - 3)
+
+
+def _render_groups(
+    parent: ET.Element,
+    groups: list[tuple[float, float]],
+    k: int,
+    start_x: float,
+    end_x: float,
+    groups_start_y: float,
+    group_spacing: float,
+) -> None:
+    for i, (rank_start, rank_end) in enumerate(groups):
+        y = groups_start_y + i * group_spacing
+        x1 = _rank_to_x(rank_start, k, start_x, end_x)
+        x2 = _rank_to_x(rank_end, k, start_x, end_x)
+        _svg_line(parent, x1, y, x2, y, color="red", width=STROKE_WIDTH / 2.0)
+        _svg_line(parent, x1, y - STROKE_WIDTH / 2.0, x1, y + STROKE_WIDTH / 2.0, color="red", width=STROKE_WIDTH / 2.0)
+        _svg_line(parent, x2, y - STROKE_WIDTH / 2.0, x2, y + STROKE_WIDTH / 2.0, color="red", width=STROKE_WIDTH / 2.0)
 
 
 def _render_cd_diagram(
@@ -197,8 +175,13 @@ def _render_cd_diagram(
     title: str | None = None,
     fig_size: tuple[int, int] | None = None,
 ) -> ET.Element:
-    delta = 8
-    offset_height = 32
+    rank_label_pairs = sorted(zip(avg_ranks, labels), key=lambda item: item[0])
+    sorted_avg_ranks = [item[0] for item in rank_label_pairs]
+    sorted_labels = [item[1] for item in rank_label_pairs]
+    groups = _compute_nonsignificant_groups(sorted_avg_ranks, cd)
+
+    delta = 18
+    offset_height = 170 + (len(groups) * 10)
     if fig_size is None:
         width, height = 512, max(256, len(labels) * delta + offset_height)
     else:
@@ -220,14 +203,24 @@ def _render_cd_diagram(
     )
 
     _svg_text(svg, title or "", width / 2.0, 0.1 * height, color="black")
-    _draw_ruler(svg, len(avg_ranks) - 1, width, height)
+    group_spacing = max(8.0, 0.03 * height)
+    groups_start_y = 0.26 * height
+    axis_y = groups_start_y + (max(0, len(groups) - 1) * group_spacing) + 0.08 * height
+    start_x, end_x = _draw_ruler(svg, len(sorted_avg_ranks), width, height, axis_y)
+    _draw_cd_bar(svg, cd, len(sorted_avg_ranks), start_x, end_x, 0.18 * height)
+    _render_groups(svg, groups, len(sorted_avg_ranks), start_x, end_x, groups_start_y, group_spacing)
 
-    cliques, lowest_clique = _compute_cliques(cd, avg_ranks, width, height)
-    cd_label_y = (START_Y_PERC - 0.15) * height
-    _svg_text(svg, f"CD={cd:.2f}", 0.2 * width, cd_label_y)
-
-    _draw_models(svg, labels, avg_ranks, lowest_clique, width, height)
-    _render_cliques(svg, cliques)
+    _draw_models(
+        svg,
+        sorted_labels,
+        sorted_avg_ranks,
+        len(sorted_avg_ranks),
+        width,
+        height,
+        axis_y,
+        start_x,
+        end_x,
+    )
 
     return svg
 
@@ -260,7 +253,7 @@ def draw_cd_diagram(
     samples_ = _to_numpy_2d(samples)
     labels_ = list(labels)
 
-    from scipy.stats import friedmanchisquare, rankdata
+    from scipy.stats import friedmanchisquare, rankdata, studentized_range
 
     _, pvalue = friedmanchisquare(*samples_.T)
     if pvalue >= alpha:
@@ -273,14 +266,12 @@ def draw_cd_diagram(
     N, k = samples_.shape
     if len(labels_) != k:
         raise ValueError("labels length must match number of model columns")
-    if k >= len(_QSTU_0_05) or np.isnan(_QSTU_0_05[k]):
-        raise ValueError(f"unsupported number of models for lookup table: {k}")
 
-    q_alpha = _QSTU_0_05[k]
+    q_alpha = studentized_range.ppf(1 - alpha, k, np.inf) / np.sqrt(2)
     cd = q_alpha * np.sqrt((k * (k + 1)) / (6 * N))
 
     avg_ranks = rankdata(-samples_, axis=1, method="average").mean(axis=0)
-    sorted_indices = np.argsort(-avg_ranks)
+    sorted_indices = np.argsort(avg_ranks)
 
     svg = _render_cd_diagram(
         cd,
@@ -295,6 +286,3 @@ def draw_cd_diagram(
         tree.write(Path(out_file), encoding="utf-8", xml_declaration=True)
 
     return svg
-
-
-_QSTU_0_05 = (np.nan, np.nan, 1.959964233, 2.343700476, 2.569032073, 2.727774717, 2.849705382, 2.948319908, 3.030878867, 3.10173026, 3.16368342, 3.218653901, 3.268003591, 3.312738701, 3.353617959, 3.391230382, 3.426041249, 3.458424619, 3.488684546, 3.517072762, 3.543799277, 3.569040161, 3.592946027, 3.615646276, 3.637252631, 3.657860551, 3.677556303, 3.696413427, 3.71449839, 3.731869175, 3.748578108, 3.764671858, 3.780192852, 3.795178566, 3.809663649, 3.823679212, 3.837254248, 3.850413505, 3.863181025, 3.875578729, 3.887627121, 3.899344587, 3.910747391, 3.921852503, 3.932673359, 3.943224099, 3.953518159, 3.963566147, 3.973379375, 3.98296845, 3.992343271, 4.001512325, 4.010484803, 4.019267776, 4.02786973, 4.036297029, 4.044556036, 4.05265453, 4.060596753, 4.068389777, 4.076037844, 4.083547318, 4.090921028, 4.098166044, 4.105284488, 4.112282016, 4.119161458, 4.125927056, 4.132582345, 4.139131568, 4.145576139, 4.151921008, 4.158168297, 4.164320833, 4.170380738, 4.176352255, 4.182236797, 4.188036487, 4.19375486, 4.199392622, 4.204952603, 4.21043763, 4.215848411, 4.221187067, 4.22645572, 4.23165649, 4.236790793, 4.241859334, 4.246864943, 4.251809034, 4.256692313, 4.261516196, 4.266282802, 4.270992841, 4.275648432, 4.280249575, 4.284798393, 4.289294885, 4.29374188, 4.298139377, 4.302488791)
