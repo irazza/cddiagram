@@ -68,6 +68,14 @@ draw_cd_diagram(
 
 **Input formats**: NumPy arrays, pandas DataFrames, or any object with a `.to_numpy()` / `.values` attribute.
 
+## Release Notes
+
+### 0.0.2
+
+- Replaced hardcoded Nemenyi critical-value lookup table with SciPy's `studentized_range` computation.
+- Updated CD diagram drawing to follow continuous rank-axis placement and first-anchor non-significant grouping.
+- Improved readability for larger numbers of algorithms with adaptive multi-row label layout.
+
 ## License
 
 MIT
