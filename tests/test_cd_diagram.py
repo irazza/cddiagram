@@ -92,15 +92,36 @@ def test_rank_to_x_matches_cd_axis_scale():
     end_x = 500.0
     cd = 1.05
 
+    # Rank 1 is on the right (Demsar convention), rank k on the left.
+    assert _CDDIAGRAM._rank_to_x(1.0, k, start_x, end_x) == pytest.approx(end_x)
+    assert _CDDIAGRAM._rank_to_x(float(k), k, start_x, end_x) == pytest.approx(start_x)
+
     x_start = _CDDIAGRAM._rank_to_x(1.0, k, start_x, end_x)
     x_end = _CDDIAGRAM._rank_to_x(1.0 + cd, k, start_x, end_x)
 
     expected_len = (end_x - start_x) * cd / (k - 1)
-    assert (x_end - x_start) == pytest.approx(expected_len)
+    # Rank increases leftward, so x_start is to the right of x_end by expected_len.
+    assert (x_start - x_end) == pytest.approx(expected_len)
 
 
-def test_estimate_label_rows_increases_for_dense_labels():
-    labels = [f"algorithm_{i:02d}" for i in range(20)]
-    rows = _CDDIAGRAM._estimate_label_rows(labels, k=20, start_x=100.0, end_x=500.0)
+def test_draw_cd_diagram_side_labels():
+    samples, labels = _make_significant_samples()
 
-    assert rows > 2
+    result = draw_cd_diagram(samples, labels=labels)
+
+    assert result is not None
+    texts = result.findall(".//text")
+    start_anchored = [t for t in texts if t.get("text-anchor") == "start"]
+    end_anchored = [t for t in texts if t.get("text-anchor") == "end"]
+    assert len(start_anchored) >= 1
+    assert len(end_anchored) >= 1
+
+    label_set = set(labels)
+    classifier_texts = [t for t in texts if (t.text or "") in label_set]
+    assert len(classifier_texts) == len(labels)
+
+    # Labels on the same side must not collide; opposite sides may share a y.
+    right_ys = [round(float(t.get("y")), 3) for t in classifier_texts if t.get("text-anchor") == "start"]
+    left_ys = [round(float(t.get("y")), 3) for t in classifier_texts if t.get("text-anchor") == "end"]
+    assert len(set(right_ys)) == len(right_ys)
+    assert len(set(left_ys)) == len(left_ys)
