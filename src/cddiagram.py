@@ -80,13 +80,12 @@ def _svg_text(
 def _draw_ruler(
     parent: ET.Element,
     k: int,
-    height: int,
     axis_y: float,
     start_x: float,
     end_x: float,
 ) -> None:
+    tick_len = 8.0
     _svg_line(parent, start_x, axis_y, end_x, axis_y)
-    tick_len = 0.035 * height
     for tick in range(1, k + 1):
         x = _rank_to_x(float(tick), k, start_x, end_x)
         _svg_line(parent, x, axis_y - tick_len / 2.0, x, axis_y + tick_len / 2.0, width=STROKE_WIDTH / 2.0)
@@ -98,17 +97,16 @@ def _draw_models(
     labels: list[str],
     avg_ranks: list[float],
     k: int,
-    height: int,
     axis_y: float,
     start_x: float,
     end_x: float,
+    labels_base_y: float,
 ) -> None:
     n = len(labels)
     if n == 0:
         return
     half = (n + 1) // 2
     row_spacing = FONT_SIZE + 6
-    base_offset = 0.075 * height
     h_gap = 4.0
     text_pad = 2.0
     marker_size = STROKE_WIDTH
@@ -138,7 +136,7 @@ def _draw_models(
             label_x_text = label_x_edge - text_pad
             anchor = "end"
 
-        row_y = axis_y + base_offset + row_index * row_spacing
+        row_y = labels_base_y + row_index * row_spacing
 
         _svg_line(
             parent,
@@ -189,17 +187,47 @@ def _draw_cd_bar(parent: ET.Element, cd: float, k: int, start_x: float, end_x: f
     _svg_text(parent, f"CD={cd:.2f}", (x1 + x2) / 2.0, cd_y - FONT_SIZE - 3)
 
 
+def _assign_group_rows(
+    groups: list[tuple[float, float]], k: int, start_x: float, end_x: float
+) -> tuple[list[int], int]:
+    """Pack groups into the minimum number of rows (greedy interval scheduling)."""
+    if not groups:
+        return [], 0
+    rows: list[list[tuple[float, float]]] = []
+    row_indices: list[int] = []
+    for rank_start, rank_end in groups:
+        x1 = _rank_to_x(rank_start, k, start_x, end_x)
+        x2 = _rank_to_x(rank_end, k, start_x, end_x)
+        x_left, x_right = min(x1, x2), max(x1, x2)
+        placed = False
+        for r, row_intervals in enumerate(rows):
+            if not any(
+                not (x_right + 2.0 < ix_left or x_left - 2.0 > ix_right)
+                for ix_left, ix_right in row_intervals
+            ):
+                row_intervals.append((x_left, x_right))
+                row_indices.append(r)
+                placed = True
+                break
+        if not placed:
+            rows.append([(x_left, x_right)])
+            row_indices.append(len(rows) - 1)
+    return row_indices, len(rows)
+
+
 def _render_groups(
     parent: ET.Element,
     groups: list[tuple[float, float]],
+    group_rows: list[int],
     k: int,
     start_x: float,
     end_x: float,
-    groups_start_y: float,
-    group_spacing: float,
+    axis_y: float,
+    compact_spacing: float,
 ) -> None:
-    for i, (rank_start, rank_end) in enumerate(groups):
-        y = groups_start_y + i * group_spacing
+    gap = 8.0
+    for (rank_start, rank_end), row in zip(groups, group_rows):
+        y = axis_y + gap + row * compact_spacing
         x1 = _rank_to_x(rank_start, k, start_x, end_x)
         x2 = _rank_to_x(rank_end, k, start_x, end_x)
         _svg_line(parent, x1, y, x2, y, color="red", width=STROKE_WIDTH / 2.0)
@@ -220,24 +248,43 @@ def _render_cd_diagram(
     groups = _compute_nonsignificant_groups(sorted_avg_ranks, cd)
 
     k = len(sorted_avg_ranks)
-    label_rows_needed = (len(sorted_labels) + 1) // 2
-    row_spacing = FONT_SIZE + 6
-    delta = 18
-    offset_height = 170 + (len(groups) * 10) + label_rows_needed * row_spacing
-    if fig_size is None:
-        width, height = 512, max(256, len(sorted_labels) * delta + offset_height)
-    else:
-        width, height = fig_size
 
+    # Label margins
     max_label_len = max((len(l) for l in sorted_labels), default=1)
     max_label_px = max(24.0, 0.58 * FONT_SIZE * max_label_len) + 8.0
     page_margin = 12.0
     min_ruler_span = 220.0
-    required_width = int(2 * (max_label_px + page_margin) + min_ruler_span)
-    width = max(width, required_width)
+
+    if fig_size is None:
+        width = max(512, int(2 * (max_label_px + page_margin) + min_ruler_span))
+    else:
+        width = max(fig_size[0], int(2 * (max_label_px + page_margin) + min_ruler_span))
 
     start_x = max_label_px + page_margin
     end_x = width - max_label_px - page_margin
+
+    # Pack non-significant groups into minimum rows
+    group_row_indices, n_group_rows = _assign_group_rows(groups, k, start_x, end_x)
+    compact_group_spacing = 8.0
+    groups_below_h = n_group_rows * compact_group_spacing + 8.0  # height used below axis
+
+    # Fixed vertical layout (top → bottom):
+    #   title | CD bar | axis ticks | ruler | groups | labels
+    _TITLE_H = 30.0
+    _CD_BAR_H = 50.0    # space for bar + "CD=X.XX" text above it
+    _TICKS_H = 22.0     # space above axis for tick number labels
+    axis_y = _TITLE_H + _CD_BAR_H + _TICKS_H
+    cd_bar_y = _TITLE_H + _CD_BAR_H * 0.5
+
+    label_rows_needed = (k + 1) // 2
+    row_spacing_lbl = FONT_SIZE + 6
+    labels_base_y = axis_y + groups_below_h + 10.0
+    labels_h = label_rows_needed * row_spacing_lbl
+
+    if fig_size is None:
+        height = max(256, int(labels_base_y + labels_h + 20))
+    else:
+        height = fig_size[1]
 
     svg = ET.Element(
         "svg",
@@ -249,23 +296,20 @@ def _render_cd_diagram(
         },
     )
 
-    _svg_text(svg, title or "", width / 2.0, 0.1 * height, color="black")
-    group_spacing = max(8.0, 0.03 * height)
-    groups_start_y = 0.26 * height
-    axis_y = groups_start_y + (max(0, len(groups) - 1) * group_spacing) + 0.08 * height
-    _draw_ruler(svg, k, height, axis_y, start_x, end_x)
-    _draw_cd_bar(svg, cd, k, start_x, end_x, 0.18 * height)
-    _render_groups(svg, groups, k, start_x, end_x, groups_start_y, group_spacing)
+    _svg_text(svg, title or "", width / 2.0, _TITLE_H / 2.0, color="black")
+    _draw_ruler(svg, k, axis_y, start_x, end_x)
+    _draw_cd_bar(svg, cd, k, start_x, end_x, cd_bar_y)
+    _render_groups(svg, groups, group_row_indices, k, start_x, end_x, axis_y, compact_group_spacing)
 
     _draw_models(
         svg,
         sorted_labels,
         sorted_avg_ranks,
         k,
-        height,
         axis_y,
         start_x,
         end_x,
+        labels_base_y,
     )
 
     return svg
