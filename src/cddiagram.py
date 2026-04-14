@@ -10,6 +10,7 @@ import numpy as np
 
 STROKE_WIDTH = 3.0
 FONT_SIZE = 10
+FONT_FAMILY = "sans-serif"
 START_Y_PERC = 0.4
 
 __all__ = ["draw_cd_diagram"]
@@ -33,6 +34,28 @@ def _svg_line(parent: ET.Element, x1: float, y1: float, x2: float, y2: float, *,
             "stroke": color,
             "stroke-width": f"{width:.3f}",
             "fill": "none",
+        },
+    )
+
+
+def _svg_polyline(
+    parent: ET.Element,
+    points: Sequence[tuple[float, float]],
+    *,
+    color: str = "black",
+    width: float = STROKE_WIDTH,
+    linejoin: str = "miter",
+) -> None:
+    points_str = " ".join(f"{x:.3f},{y:.3f}" for x, y in points)
+    ET.SubElement(
+        parent,
+        "polyline",
+        {
+            "points": points_str,
+            "stroke": color,
+            "stroke-width": f"{width:.3f}",
+            "fill": "none",
+            "stroke-linejoin": linejoin,
         },
     )
 
@@ -65,10 +88,9 @@ def _svg_text(
         "x": f"{x:.3f}",
         "y": f"{y:.3f}",
         "font-size": str(FONT_SIZE),
+        "font-family": FONT_FAMILY,
         "text-anchor": anchor,
         "fill": color,
-        "stroke": color,
-        "stroke-width": "1",
     }
     if dominant_baseline is not None:
         attrib["dominant-baseline"] = dominant_baseline
@@ -109,16 +131,17 @@ def _draw_models(
     row_spacing = FONT_SIZE + 6
     h_gap = 4.0
     text_pad = 2.0
-    marker_size = STROKE_WIDTH
+    marker_w = STROKE_WIDTH
+    marker_h = 2.0 * STROKE_WIDTH  # taller than the axis stroke so the marker is visible
 
     for i, (label, rank) in enumerate(zip(labels, avg_ranks)):
         x_marker = _rank_to_x(rank, k, start_x, end_x)
         _svg_rect(
             parent,
-            x_marker - marker_size / 2.0,
-            axis_y - marker_size / 2.0,
-            marker_size,
-            marker_size,
+            x_marker - marker_w / 2.0,
+            axis_y - marker_h / 2.0,
+            marker_w,
+            marker_h,
             fill="black",
         )
 
@@ -138,21 +161,17 @@ def _draw_models(
 
         row_y = labels_base_y + row_index * row_spacing
 
-        _svg_line(
+        # Single polyline per classifier so the L-corner has a proper
+        # stroke-linejoin (avoids the notch/gap produced by two separate lines).
+        _svg_polyline(
             parent,
-            x_marker,
-            axis_y + marker_size / 2.0,
-            x_marker,
-            row_y,
+            [
+                (x_marker, axis_y + marker_h / 2.0),
+                (x_marker, row_y),
+                (label_x_edge, row_y),
+            ],
             width=STROKE_WIDTH / 2.0,
-        )
-        _svg_line(
-            parent,
-            x_marker,
-            row_y,
-            label_x_edge,
-            row_y,
-            width=STROKE_WIDTH / 2.0,
+            linejoin="miter",
         )
         _svg_text(
             parent,
@@ -165,14 +184,25 @@ def _draw_models(
 
 
 def _compute_nonsignificant_groups(sorted_avg_ranks: list[float], cd: float) -> list[tuple[float, float]]:
-    groups: list[tuple[float, float]] = []
+    raw: list[tuple[int, int]] = []
     for i in range(len(sorted_avg_ranks)):
         j = i + 1
         while j < len(sorted_avg_ranks) and sorted_avg_ranks[j] - sorted_avg_ranks[i] <= cd:
             j += 1
         if j - i > 1:
-            groups.append((sorted_avg_ranks[i], sorted_avg_ranks[j - 1]))
-    return groups
+            raw.append((i, j - 1))
+
+    # Keep only maximal groups: drop any whose right endpoint is not strictly
+    # greater than the running max right endpoint seen in left-to-right order.
+    # A subset clique (same rightmost member, different leftmost) would otherwise
+    # render as a near-duplicate bar on top of its maximal parent.
+    maximal: list[tuple[float, float]] = []
+    max_right = -1
+    for (i, r) in raw:
+        if r > max_right:
+            maximal.append((sorted_avg_ranks[i], sorted_avg_ranks[r]))
+            max_right = r
+    return maximal
 
 
 def _draw_cd_bar(parent: ET.Element, cd: float, k: int, start_x: float, end_x: float, cd_y: float) -> None:
@@ -180,8 +210,8 @@ def _draw_cd_bar(parent: ET.Element, cd: float, k: int, start_x: float, end_x: f
     cd_end = 1.0 + cd
     x1 = _rank_to_x(cd_start, k, start_x, end_x)
     x2 = _rank_to_x(cd_end, k, start_x, end_x)
+    tick_len = 8.0  # same as ruler ticks
     _svg_line(parent, x1, cd_y, x2, cd_y, color="red", width=STROKE_WIDTH / 2.0)
-    tick_len = 0.02 * (end_x - start_x)
     _svg_line(parent, x1, cd_y - tick_len / 2.0, x1, cd_y + tick_len / 2.0, color="red", width=STROKE_WIDTH / 2.0)
     _svg_line(parent, x2, cd_y - tick_len / 2.0, x2, cd_y + tick_len / 2.0, color="red", width=STROKE_WIDTH / 2.0)
     _svg_text(parent, f"CD={cd:.2f}", (x1 + x2) / 2.0, cd_y - FONT_SIZE - 3)
@@ -226,13 +256,14 @@ def _render_groups(
     compact_spacing: float,
 ) -> None:
     gap = 8.0
+    cap_half = compact_spacing * 0.4
     for (rank_start, rank_end), row in zip(groups, group_rows):
         y = axis_y + gap + row * compact_spacing
         x1 = _rank_to_x(rank_start, k, start_x, end_x)
         x2 = _rank_to_x(rank_end, k, start_x, end_x)
         _svg_line(parent, x1, y, x2, y, color="red", width=STROKE_WIDTH / 2.0)
-        _svg_line(parent, x1, y - STROKE_WIDTH / 2.0, x1, y + STROKE_WIDTH / 2.0, color="red", width=STROKE_WIDTH / 2.0)
-        _svg_line(parent, x2, y - STROKE_WIDTH / 2.0, x2, y + STROKE_WIDTH / 2.0, color="red", width=STROKE_WIDTH / 2.0)
+        _svg_line(parent, x1, y - cap_half, x1, y + cap_half, color="red", width=STROKE_WIDTH / 2.0)
+        _svg_line(parent, x2, y - cap_half, x2, y + cap_half, color="red", width=STROKE_WIDTH / 2.0)
 
 
 def _render_cd_diagram(
@@ -251,7 +282,7 @@ def _render_cd_diagram(
 
     # Label margins
     max_label_len = max((len(l) for l in sorted_labels), default=1)
-    max_label_px = max(24.0, 0.58 * FONT_SIZE * max_label_len) + 8.0
+    max_label_px = max(24.0, 0.62 * FONT_SIZE * max_label_len) + 8.0
     page_margin = 12.0
     min_ruler_span = 220.0
 
@@ -293,10 +324,12 @@ def _render_cd_diagram(
             "width": str(width),
             "height": str(height),
             "style": "background-color:white",
+            "font-family": FONT_FAMILY,
         },
     )
 
-    _svg_text(svg, title or "", width / 2.0, _TITLE_H / 2.0, color="black")
+    if title:
+        _svg_text(svg, title, width / 2.0, _TITLE_H / 2.0, color="black")
     _draw_ruler(svg, k, axis_y, start_x, end_x)
     _draw_cd_bar(svg, cd, k, start_x, end_x, cd_bar_y)
     _render_groups(svg, groups, group_row_indices, k, start_x, end_x, axis_y, compact_group_spacing)
