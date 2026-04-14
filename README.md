@@ -70,6 +70,27 @@ draw_cd_diagram(
 
 ## Release Notes
 
+### 0.0.6
+
+- Red clique bars now render on top of all other SVG elements (connectors, markers, axis).
+
+### 0.0.5
+
+- Text labels no longer carry an SVG stroke, removing the bold/smudged appearance.
+- `font-family="sans-serif"` set globally for consistent cross-platform rendering.
+- Empty title no longer emits a stray `<text/>` node.
+- Non-maximal cliques filtered out — only strictly maximal non-significance groups are drawn, eliminating near-duplicate bars.
+- Classifier connectors use a single `<polyline>` with `stroke-linejoin="miter"`, removing the corner notch produced by two separate lines.
+- Axis markers are taller than the axis stroke so they are visible.
+- Clique end-caps enlarged for legibility.
+- CD-bar tick length unified with ruler tick length.
+- Label-width heuristic bumped to better fit sans-serif glyphs.
+
+### 0.0.4
+
+- Non-significant groups packed into the minimum number of rows (greedy interval scheduling).
+- Fixed vertical layout: title → CD bar → ruler → groups → labels (groups now drawn below the axis).
+
 ### 0.0.2
 
 - Replaced hardcoded Nemenyi critical-value lookup table with SciPy's `studentized_range` computation.
