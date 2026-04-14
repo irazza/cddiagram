@@ -142,7 +142,7 @@ def _draw_models(
             axis_y - marker_h / 2.0,
             marker_w,
             marker_h,
-            fill="black",
+            fill="gray",
         )
 
         if i < half:
@@ -332,8 +332,6 @@ def _render_cd_diagram(
         _svg_text(svg, title, width / 2.0, _TITLE_H / 2.0, color="black")
     _draw_ruler(svg, k, axis_y, start_x, end_x)
     _draw_cd_bar(svg, cd, k, start_x, end_x, cd_bar_y)
-    _render_groups(svg, groups, group_row_indices, k, start_x, end_x, axis_y, compact_group_spacing)
-
     _draw_models(
         svg,
         sorted_labels,
@@ -344,6 +342,8 @@ def _render_cd_diagram(
         end_x,
         labels_base_y,
     )
+    # Groups painted last so clique bars render on top of everything else.
+    _render_groups(svg, groups, group_row_indices, k, start_x, end_x, axis_y, compact_group_spacing)
 
     return svg
 
