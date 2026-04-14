@@ -1,6 +1,6 @@
 [project]
 name = "cddiagram"
-version = "0.0.5"
+version = "0.0.6.dev0"
 authors = [
   { name="Alberto Azzari", email="alberto.azzari@univr.it" },
 ]
