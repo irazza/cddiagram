@@ -142,7 +142,7 @@ def _draw_models(
             axis_y - marker_h / 2.0,
             marker_w,
             marker_h,
-            fill="gray",
+            fill="black",
         )
 
         if i < half:
