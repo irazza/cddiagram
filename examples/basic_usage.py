@@ -15,4 +15,4 @@ models = {
     'model8': rng.normal(loc=0.9, scale=0.1, size=30),
 }
 samples = np.column_stack([models[k] for k in models])
-draw_cd_diagram(samples, labels=list(models.keys()), out_file="out.svg")
+draw_cd_diagram(samples, labels=list(models.keys()), out_file="out.svg", title="Model comparison")
