@@ -125,3 +125,24 @@ def test_draw_cd_diagram_side_labels():
     left_ys = [round(float(t.get("y")), 3) for t in classifier_texts if t.get("text-anchor") == "end"]
     assert len(set(right_ys)) == len(right_ys)
     assert len(set(left_ys)) == len(left_ys)
+
+
+def test_nemenyi_q_alpha_lookup_matches_scipy_sampled():
+    from scipy.stats import studentized_range
+
+    for k in (3, 8, 25, 100):
+        expected = studentized_range.ppf(0.95, k, np.inf) / np.sqrt(2)
+        actual = _CDDIAGRAM._nemenyi_q_alpha(k, 0.05)
+        assert actual == pytest.approx(expected, abs=1e-12)
+
+
+def test_nemenyi_q_alpha_fallback_out_of_range_and_alpha():
+    from scipy.stats import studentized_range
+
+    expected_k = studentized_range.ppf(0.95, 101, np.inf) / np.sqrt(2)
+    actual_k = _CDDIAGRAM._nemenyi_q_alpha(101, 0.05)
+    assert actual_k == pytest.approx(expected_k)
+
+    expected_alpha = studentized_range.ppf(0.90, 8, np.inf) / np.sqrt(2)
+    actual_alpha = _CDDIAGRAM._nemenyi_q_alpha(8, 0.10)
+    assert actual_alpha == pytest.approx(expected_alpha)

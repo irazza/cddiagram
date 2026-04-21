@@ -16,6 +16,123 @@ START_Y_PERC = 0.4
 __all__ = ["draw_cd_diagram"]
 
 
+_NEMENYI_ALPHA = 0.05
+_NEMENYI_Q_ALPHA_LOOKUP_START_K = 3
+_NEMENYI_Q_ALPHA_LOOKUP = (
+    2.343700586378,
+    2.569031772546,
+    2.727774370870,
+    2.849705419610,
+    2.948320017530,
+    3.030878449614,
+    3.101730341303,
+    3.163683577053,
+    3.218653607329,
+    3.268003924466,
+    3.312738593351,
+    3.353617751852,
+    3.391230283765,
+    3.426041379371,
+    3.458424707347,
+    3.488684799379,
+    3.517073008692,
+    3.543799131518,
+    3.569040029951,
+    3.592946136985,
+    3.615646437227,
+    3.637252331689,
+    3.657860673072,
+    3.677556175853,
+    3.696413349185,
+    3.714498061375,
+    3.731868816887,
+    3.748577806831,
+    3.764671779385,
+    3.780192765841,
+    3.795178690014,
+    3.809663882747,
+    3.823679518639,
+    3.837253988676,
+    3.850413219673,
+    3.863180949380,
+    3.875578964405,
+    3.887627306809,
+    3.899344454180,
+    3.910747477169,
+    3.921852177757,
+    3.932673211031,
+    3.943224192754,
+    3.953517794659,
+    3.963565829129,
+    3.973379324619,
+    3.982968593028,
+    3.992343290009,
+    4.001512469103,
+    4.010484630418,
+    4.019267764515,
+    4.027869392046,
+    4.036296599626,
+    4.044556072366,
+    4.052654123421,
+    4.060596720889,
+    4.068389512322,
+    4.076037847122,
+    4.083546797007,
+    4.090921174773,
+    4.098165551497,
+    4.105284272340,
+    4.112281471089,
+    4.119161083553,
+    4.125926859914,
+    4.132582376138,
+    4.139131044527,
+    4.145576123483,
+    4.151920726562,
+    4.158167830873,
+    4.164320284881,
+    4.170380815658,
+    4.176352035642,
+    4.182236448921,
+    4.188036457107,
+    4.193754364808,
+    4.199392384750,
+    4.204952642564,
+    4.210437181260,
+    4.215847965430,
+    4.221186885180,
+    4.226455759824,
+    4.231656341347,
+    4.236790317671,
+    4.241859315710,
+    4.246864904262,
+    4.251808596723,
+    4.256691853645,
+    4.261516085155,
+    4.266282653231,
+    4.270992873854,
+    4.275648019044,
+    4.280249318781,
+    4.284797962827,
+    4.289295102445,
+    4.293741852035,
+    4.298139290676,
+    4.302488463597,
+)
+_NEMENYI_Q_ALPHA_LOOKUP_END_K = _NEMENYI_Q_ALPHA_LOOKUP_START_K + len(_NEMENYI_Q_ALPHA_LOOKUP) - 1
+
+
+def _nemenyi_q_alpha(k: int, alpha: float) -> float:
+    if (
+        alpha == _NEMENYI_ALPHA
+        and _NEMENYI_Q_ALPHA_LOOKUP_START_K <= k <= _NEMENYI_Q_ALPHA_LOOKUP_END_K
+    ):
+        return _NEMENYI_Q_ALPHA_LOOKUP[k - _NEMENYI_Q_ALPHA_LOOKUP_START_K]
+
+    from scipy.stats import studentized_range
+
+    return studentized_range.ppf(1.0 - alpha, k, np.inf) / np.sqrt(2.0)
+
+
 def _rank_to_x(rank: float, k: int, start_x: float, end_x: float) -> float:
     if k <= 1:
         return (start_x + end_x) / 2.0
@@ -376,7 +493,7 @@ def draw_cd_diagram(
     samples_ = _to_numpy_2d(samples)
     labels_ = list(labels)
 
-    from scipy.stats import friedmanchisquare, rankdata, studentized_range
+    from scipy.stats import friedmanchisquare, rankdata
 
     _, pvalue = friedmanchisquare(*samples_.T)
     if pvalue >= alpha:
@@ -390,7 +507,7 @@ def draw_cd_diagram(
     if len(labels_) != k:
         raise ValueError("labels length must match number of model columns")
 
-    q_alpha = studentized_range.ppf(1 - alpha, k, np.inf) / np.sqrt(2)
+    q_alpha = _nemenyi_q_alpha(k, alpha)
     cd = q_alpha * np.sqrt((k * (k + 1)) / (6 * N))
 
     avg_ranks = rankdata(-samples_, axis=1, method="average").mean(axis=0)

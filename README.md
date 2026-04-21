@@ -70,6 +70,11 @@ draw_cd_diagram(
 
 ## Release Notes
 
+### 0.0.7
+
+- Optimized Nemenyi critical-value computation with a precomputed `q_alpha` lookup table for `k=3..100` at `alpha=0.05`.
+- Kept a SciPy `studentized_range` fallback for values outside the lookup range (or different alpha), preserving behavior for all valid inputs.
+
 ### 0.0.6
 
 - Red clique bars now render on top of all other SVG elements (connectors, markers, axis).
