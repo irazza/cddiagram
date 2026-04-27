@@ -300,14 +300,73 @@ def _draw_models(
         )
 
 
-def _compute_nonsignificant_groups(sorted_avg_ranks: list[float], cd: float) -> list[tuple[float, float]]:
+def _nonsig_matrix_from_cd(sorted_avg_ranks: list[float], cd: float) -> np.ndarray:
+    n = len(sorted_avg_ranks)
+    out = np.zeros((n, n), dtype=bool)
+    for i in range(n):
+        for j in range(n):
+            out[i, j] = abs(sorted_avg_ranks[i] - sorted_avg_ranks[j]) <= cd
+    return out
+
+
+def _nonsig_matrix_from_wilcoxon_holm(sorted_samples: np.ndarray, alpha: float) -> np.ndarray:
+    """Pairwise two-sided Wilcoxon signed-rank with Holm step-down correction.
+
+    `sorted_samples` is (N, k) reordered to the sorted-rank classifier order;
+    the returned bool (k, k) matrix is therefore indexed by sorted position.
+    True means the pair is *not* significantly different at level `alpha`.
+    """
+    from scipy.stats import wilcoxon
+
+    _, k = sorted_samples.shape
+    pairs: list[tuple[int, int]] = []
+    raw: list[float] = []
+    for i in range(k):
+        for j in range(i + 1, k):
+            x = sorted_samples[:, i]
+            y = sorted_samples[:, j]
+            # All-zero differences: no evidence of difference, treat as p=1.
+            if not np.any(x - y):
+                p = 1.0
+            else:
+                _, p = wilcoxon(x, y, zero_method="wilcox", alternative="two-sided")
+            pairs.append((i, j))
+            raw.append(float(p))
+
+    raw_arr = np.asarray(raw)
+    m = len(raw_arr)
+    order_ = np.argsort(raw_arr)
+    adj = np.empty(m)
+    running = 0.0
+    for rank, idx in enumerate(order_):
+        running = max(running, (m - rank) * raw_arr[idx])
+        adj[idx] = min(running, 1.0)
+
+    nonsig = np.eye(k, dtype=bool)
+    for (i, j), p in zip(pairs, adj):
+        flag = bool(p >= alpha)
+        nonsig[i, j] = flag
+        nonsig[j, i] = flag
+    return nonsig
+
+
+def _compute_nonsignificant_groups(
+    sorted_avg_ranks: list[float],
+    nonsig: np.ndarray,
+) -> list[tuple[float, float]]:
+    """Maximal contiguous cliques of mutually non-significant classifiers.
+
+    `nonsig` is a bool (k, k) matrix indexed by sorted-rank position.
+    A contiguous range [i..r] is a clique iff every pair within is non-significant.
+    """
+    n = len(sorted_avg_ranks)
     raw: list[tuple[int, int]] = []
-    for i in range(len(sorted_avg_ranks)):
-        j = i + 1
-        while j < len(sorted_avg_ranks) and sorted_avg_ranks[j] - sorted_avg_ranks[i] <= cd:
+    for i in range(n):
+        j = i
+        while j + 1 < n and all(nonsig[m, j + 1] for m in range(i, j + 1)):
             j += 1
-        if j - i > 1:
-            raw.append((i, j - 1))
+        if j > i:
+            raw.append((i, j))
 
     # Keep only maximal groups: drop any whose right endpoint is not strictly
     # greater than the running max right endpoint seen in left-to-right order.
@@ -384,16 +443,14 @@ def _render_groups(
 
 
 def _render_cd_diagram(
-    cd: float,
-    avg_ranks: list[float],
-    labels: list[str],
+    cd: float | None,
+    sorted_avg_ranks: list[float],
+    sorted_labels: list[str],
+    nonsig: np.ndarray,
     title: str | None = None,
     fig_size: tuple[int, int] | None = None,
 ) -> ET.Element:
-    rank_label_pairs = sorted(zip(avg_ranks, labels), key=lambda item: item[0])
-    sorted_avg_ranks = [item[0] for item in rank_label_pairs]
-    sorted_labels = [item[1] for item in rank_label_pairs]
-    groups = _compute_nonsignificant_groups(sorted_avg_ranks, cd)
+    groups = _compute_nonsignificant_groups(sorted_avg_ranks, nonsig)
 
     k = len(sorted_avg_ranks)
 
@@ -417,10 +474,12 @@ def _render_cd_diagram(
     groups_below_h = n_group_rows * compact_group_spacing + 8.0  # height used below axis
 
     # Fixed vertical layout (top → bottom):
-    #   title | CD bar | axis ticks | ruler | groups | labels
+    #   title | [CD bar] | axis ticks | ruler | groups | labels
+    # The CD bar is only meaningful for Nemenyi (single critical-distance threshold);
+    # under Wilcoxon-Holm each pair has its own adjusted p-value, so we omit it.
     _TITLE_H = 30.0
-    _CD_BAR_H = 50.0    # space for bar + "CD=X.XX" text above it
-    _TICKS_H = 22.0     # space above axis for tick number labels
+    _CD_BAR_H = 50.0 if cd is not None else 0.0
+    _TICKS_H = 22.0
     axis_y = _TITLE_H + _CD_BAR_H + _TICKS_H
     cd_bar_y = _TITLE_H + _CD_BAR_H * 0.5
 
@@ -448,7 +507,8 @@ def _render_cd_diagram(
     if title:
         _svg_text(svg, title, width / 2.0, _TITLE_H / 2.0, color="black")
     _draw_ruler(svg, k, axis_y, start_x, end_x)
-    _draw_cd_bar(svg, cd, k, start_x, end_x, cd_bar_y)
+    if cd is not None:
+        _draw_cd_bar(svg, cd, k, start_x, end_x, cd_bar_y)
     _draw_models(
         svg,
         sorted_labels,
@@ -487,8 +547,14 @@ def draw_cd_diagram(
     title: str | None = None,
     out_file: str | None = None,
     fig_size: tuple[int, int] | None = None,
+    posthoc: str = "wilcoxon-holm",
 ) -> ET.Element | None:
     alpha = 0.05
+
+    if posthoc not in {"wilcoxon-holm", "nemenyi"}:
+        raise ValueError(
+            f"posthoc must be 'wilcoxon-holm' or 'nemenyi', got {posthoc!r}"
+        )
 
     samples_ = _to_numpy_2d(samples)
     labels_ = list(labels)
@@ -507,19 +573,21 @@ def draw_cd_diagram(
     if len(labels_) != k:
         raise ValueError("labels length must match number of model columns")
 
-    q_alpha = _nemenyi_q_alpha(k, alpha)
-    cd = q_alpha * np.sqrt((k * (k + 1)) / (6 * N))
-
     avg_ranks = rankdata(-samples_, axis=1, method="average").mean(axis=0)
     sorted_indices = np.argsort(avg_ranks)
+    sorted_ranks = avg_ranks[sorted_indices].tolist()
+    sorted_labels = [labels_[i] for i in sorted_indices]
 
-    svg = _render_cd_diagram(
-        cd,
-        avg_ranks[sorted_indices].tolist(),
-        [labels_[i] for i in sorted_indices],
-        title,
-        fig_size,
-    )
+    if posthoc == "nemenyi":
+        q_alpha = _nemenyi_q_alpha(k, alpha)
+        cd: float | None = q_alpha * np.sqrt((k * (k + 1)) / (6 * N))
+        nonsig = _nonsig_matrix_from_cd(sorted_ranks, cd)
+    else:
+        cd = None
+        sorted_samples = samples_[:, sorted_indices]
+        nonsig = _nonsig_matrix_from_wilcoxon_holm(sorted_samples, alpha)
+
+    svg = _render_cd_diagram(cd, sorted_ranks, sorted_labels, nonsig, title, fig_size)
 
     if out_file is not None:
         tree = ET.ElementTree(svg)

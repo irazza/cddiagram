@@ -1,18 +1,9 @@
 from cddiagram import draw_cd_diagram
-import numpy as np
+import pandas as pd
+import scikit_posthocs as sp
+import matplotlib.pyplot as plt
+
+values = pd.read_csv("examples/test_data.csv", index_col=0, header=0)
 
 
-rng = np.random.default_rng(1)
-
-models = {
-    'model1': rng.normal(loc=0.2, scale=0.1, size=30),
-    'model2': rng.normal(loc=0.2, scale=0.1, size=30),
-    'model3': rng.normal(loc=0.4, scale=0.1, size=30),
-    'model4': rng.normal(loc=0.5, scale=0.1, size=30),
-    'model5': rng.normal(loc=0.7, scale=0.1, size=30),
-    'model6': rng.normal(loc=0.7, scale=0.1, size=30),
-    'model7': rng.normal(loc=0.8, scale=0.1, size=30),
-    'model8': rng.normal(loc=0.9, scale=0.1, size=30),
-}
-samples = np.column_stack([models[k] for k in models])
-draw_cd_diagram(samples, labels=list(models.keys()), out_file="out.svg", title="Model comparison")
+draw_cd_diagram(values, labels=values.columns.to_list(), out_file="out.svg", title="Model comparison")

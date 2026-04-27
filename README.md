@@ -11,8 +11,10 @@ CD diagrams visualize the statistical comparison of multiple classifiers (or mod
 ## How it works
 
 1. A **Friedman test** checks whether at least one model differs significantly from the others (at alpha = 0.05).
-2. If significant, the **Nemenyi post-hoc test** computes a critical distance (CD) threshold.
-3. Models whose average rank difference is less than CD are grouped together — they are not statistically distinguishable.
+2. If significant, a pairwise post-hoc test determines which pairs of models differ. Two options are supported:
+   - `posthoc="wilcoxon-holm"` (default): pairwise two-sided **Wilcoxon signed-rank** tests with **Holm** step-down correction. Each pairwise decision uses only those two models' per-dataset scores, so it is robust to which other models are in the experiment (Benavoli, Corani & Mangili, 2016).
+   - `posthoc="nemenyi"`: original **Nemenyi** test from Demšar (2006). A single critical distance `CD = q_α · √(k(k+1)/6N)` is computed; pairs with `|R̄_i − R̄_j| ≤ CD` are deemed non-significant. The diagram includes the iconic CD bar.
+3. Maximal contiguous cliques of mutually non-significant models are connected by horizontal bars below the rank axis.
 4. The result is rendered as an SVG diagram showing ranked models and significance groups.
 
 ## Install
@@ -58,17 +60,23 @@ If the Friedman test is not significant, the function issues a warning and retur
 
 ```python
 draw_cd_diagram(
-    samples,           # 2D array-like (rows=datasets, columns=models)
-    labels,            # Sequence of model names (one per column)
-    title=None,        # Optional diagram title
-    out_file=None,     # Optional path to write SVG file
-    fig_size=None,     # Optional (width, height) tuple in pixels
+    samples,                   # 2D array-like (rows=datasets, columns=models)
+    labels,                    # Sequence of model names (one per column)
+    title=None,                # Optional diagram title
+    out_file=None,             # Optional path to write SVG file
+    fig_size=None,             # Optional (width, height) tuple in pixels
+    posthoc="wilcoxon-holm",   # "wilcoxon-holm" (default) or "nemenyi"
 ) -> Element | None
 ```
 
 **Input formats**: NumPy arrays, pandas DataFrames, or any object with a `.to_numpy()` / `.values` attribute.
 
 ## Release Notes
+
+### 0.0.8
+
+- Added `posthoc` parameter; default switched to **Wilcoxon signed-rank with Holm correction** to avoid Nemenyi's pool-dependency defect (Benavoli, Corani & Mangili, *JMLR* 2016). The original Demšar/Nemenyi behavior is available with `posthoc="nemenyi"`.
+- The CD bar is rendered only when `posthoc="nemenyi"` (no single critical distance exists for Wilcoxon-Holm).
 
 ### 0.0.7
 
